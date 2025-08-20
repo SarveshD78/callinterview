@@ -1,0 +1,23 @@
+{
+  "name": "twilio_call_app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SarveshD78/callinterview.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/SarveshD78/callinterview/issues"
+  },
+  "homepage": "https://github.com/SarveshD78/callinterview#readme",
+  "description": "",
+  "dependencies": {
+    "@twilio/voice-sdk": "^2.15.0"
+  }
+}
