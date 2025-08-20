@@ -2,121 +2,89 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Talexa Interview System</title>
     <script src="https://media.twiliocdn.com/sdk/js/client/v1.17/twilio.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; padding: 20px; }
-        button { margin: 5px; padding: 10px 20px; }
-        select { margin: 5px; padding: 5px; }
-    </style>
 </head>
 <body>
     <h1>Talexa Interview System</h1>
 
-    <div>
-        <label>Microphone: </label>
-        <select id="input-devices"></select>
-    </div>
-    <div>
-        <label>Speakers: </label>
-        <select id="output-devices"></select>
-    </div>
+    <!-- Call form -->
+    <input type="text" id="candidateNumber" placeholder="Enter candidate number">
+    <button id="callButton">Call Candidate</button>
 
-    <div>
-        <button id="start-device">Initialize Device</button>
-        <button id="call-button">Call Candidate</button>
-        <button id="answer-button">Answer Incoming Call</button>
-        <button id="hangup-button">Hang Up</button>
+    <!-- Incoming call -->
+    <div id="incomingCallDiv" style="display:none;">
+        <p id="incomingCallInfo"></p>
+        <button id="acceptCall">Accept</button>
+        <button id="rejectCall">Reject</button>
     </div>
 
     <script>
-        let device;
-        let currentConnection;
+    let device;
 
-        const inputSelect = document.getElementById('input-devices');
-        const outputSelect = document.getElementById('output-devices');
+    async function getToken() {
+        const response = await fetch('/token');
+        const data = await response.json();
+        return data.token;
+    }
 
-        async function fetchToken() {
-            const res = await fetch('/token');
-            const data = await res.json();
-            return data.token;
-        }
+    async function initTwilio() {
+        const token = await getToken();
 
-        async function populateDevices() {
-            const devices = await Twilio.Device.audio.availableInputDevices();
-            inputSelect.innerHTML = '';
-            devices.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.text = d.label || d.deviceId;
-                inputSelect.appendChild(opt);
-            });
+        // Setup Twilio Device
+        device = new Twilio.Device(token, {
+            debug: true,
+            enableRingingState: true
+        });
 
-            const outputs = await Twilio.Device.audio.availableOutputDevices();
-            outputSelect.innerHTML = '';
-            outputs.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.text = d.label || d.deviceId;
-                outputSelect.appendChild(opt);
-            });
-        }
+        device.on('ready', function() {
+            console.log('Twilio Device Ready');
+        });
 
-        document.getElementById('start-device').onclick = async () => {
-            // Must be triggered by user gesture
-            const token = await fetchToken();
-            device = new Twilio.Device(token, { debug: true });
+        device.on('error', function(error) {
+            console.error('Twilio Device Error:', error);
+        });
 
-            device.on('ready', () => console.log('Twilio Device Ready'));
-            device.on('error', err => console.error('Device error:', err));
-            device.on('incoming', conn => {
-                console.log('Incoming call from:', conn.parameters.From);
-                currentConnection = conn;
-            });
-            device.on('connect', conn => currentConnection = conn);
-            device.on('disconnect', conn => currentConnection = null);
+        device.on('incoming', function(connection) {
+            console.log('Incoming call from:', connection.parameters.From);
+            document.getElementById('incomingCallDiv').style.display = 'block';
+            document.getElementById('incomingCallInfo').innerText = 
+                'Incoming call from: ' + connection.parameters.From;
 
-            await populateDevices();
+            document.getElementById('acceptCall').onclick = () => {
+                connection.accept();
+                document.getElementById('incomingCallDiv').style.display = 'none';
+            };
 
-            // Set initial audio devices
-            const selectedInput = inputSelect.value;
-            if (selectedInput) device.audio.inputDevices.set(selectedInput);
-            const selectedOutput = outputSelect.value;
-            if (selectedOutput) device.audio.outputDevices.set(selectedOutput);
+            document.getElementById('rejectCall').onclick = () => {
+                connection.reject();
+                document.getElementById('incomingCallDiv').style.display = 'none';
+            };
+        });
+    }
 
-            // Listen for changes
-            inputSelect.onchange = () => device.audio.inputDevices.set(inputSelect.value);
-            outputSelect.onchange = () => device.audio.outputDevices.set(outputSelect.value);
+    document.addEventListener('DOMContentLoaded', function() {
+        initTwilio();
 
-            console.log('Device initialized');
-        };
+        document.getElementById('callButton').addEventListener('click', async function() {
+            const toNumber = document.getElementById('candidateNumber').value;
+            if (!toNumber) return alert('Enter candidate number');
 
-        document.getElementById('call-button').onclick = () => {
-            const toNumber = prompt('Enter candidate number (with country code, e.g., +91xxxx):');
-            if (!toNumber) return alert('Number required');
-
-            currentConnection = device.connect({ To: toNumber });
-            console.log('Calling:', toNumber);
-        };
-
-        document.getElementById('answer-button').onclick = () => {
-            if (currentConnection) {
-                currentConnection.accept();
-                console.log('Call answered');
-            } else {
-                alert('No incoming call');
+            try {
+                const response = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ to: toNumber })
+                });
+                const data = await response.json();
+                console.log('Call response:', data);
+                alert('Call started! Call SID: ' + data.call_sid);
+            } catch (err) {
+                console.error(err);
+                alert('Error starting call: ' + err);
             }
-        };
-
-        document.getElementById('hangup-button').onclick = () => {
-            if (currentConnection) {
-                currentConnection.disconnect();
-                console.log('Call hung up');
-            } else {
-                alert('No active call');
-            }
-        };
+        });
+    });
     </script>
 </body>
 </html>
