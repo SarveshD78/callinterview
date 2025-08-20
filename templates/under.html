@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Talexa Interview System</title>
-    <script src="https://media.twiliocdn.com/sdk/js/client/v1.17/twilio.min.js"></script>
+    <!-- Use latest Twilio Voice SDK -->
+    <script src="https://media.twiliocdn.com/sdk/js/voice/latest/twilio.min.js"></script>
 </head>
 <body>
     <h1>Talexa Interview System</h1>
@@ -31,24 +32,21 @@
     async function initTwilio() {
         const token = await getToken();
 
-        // Setup Twilio Device
-        device = new Twilio.Device(token, {
-            debug: true,
-            enableRingingState: true
-        });
+        // Setup Twilio Device using latest SDK
+        device = new Twilio.Voice.Device(token, { debug: true });
 
-        device.on('ready', function() {
+        device.on('ready', () => {
             console.log('Twilio Device Ready');
         });
 
-        device.on('error', function(error) {
+        device.on('error', (error) => {
             console.error('Twilio Device Error:', error);
         });
 
-        device.on('incoming', function(connection) {
+        device.on('incoming', (connection) => {
             console.log('Incoming call from:', connection.parameters.From);
             document.getElementById('incomingCallDiv').style.display = 'block';
-            document.getElementById('incomingCallInfo').innerText = 
+            document.getElementById('incomingCallInfo').innerText =
                 'Incoming call from: ' + connection.parameters.From;
 
             document.getElementById('acceptCall').onclick = () => {
@@ -63,10 +61,10 @@
         });
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', () => {
         initTwilio();
 
-        document.getElementById('callButton').addEventListener('click', async function() {
+        document.getElementById('callButton').addEventListener('click', async () => {
             const toNumber = document.getElementById('candidateNumber').value;
             if (!toNumber) return alert('Enter candidate number');
 
