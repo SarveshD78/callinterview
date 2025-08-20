@@ -2,14 +2,106 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Twilio Call App</title>
+    <title>Talexa Interview System</title>
+    <script src="https://media.twiliocdn.com/sdk/js/client/v1.13/twilio.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .call-controls { margin-top: 20px; }
+        button { margin-right: 10px; padding: 10px 20px; }
+    </style>
 </head>
 <body>
-    <h2>Twilio Phone ↔ Browser Interview</h2>
-    <input type="text" id="candidateNumber" placeholder="Enter verified candidate number">
-    <button id="callBtn">Start Call</button>
+    <h1>Talexa Interview System</h1>
 
-    <script src="https://media.twiliocdn.com/sdk/js/client/v1.13/twilio.min.js"></script>
-    <script src="/static/js/main.js"></script>
+    <div>
+        <label>Candidate Number:</label>
+        <input type="text" id="candidateNumber" placeholder="+1234567890">
+        <button id="startCall">Call Candidate</button>
+    </div>
+
+    <div class="call-controls">
+        <button id="acceptCall" disabled>Pick Up</button>
+        <button id="hangupCall" disabled>Hang Up</button>
+    </div>
+
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        let activeCall;
+
+        // 1️⃣ Fetch Twilio token from Flask endpoint
+        fetch('/token')
+            .then(res => res.json())
+            .then(data => {
+                Twilio.Device.setup(data.token, { debug: true });
+
+                // Incoming call handler
+                Twilio.Device.incoming(function(call) {
+                    console.log('Incoming call from:', call.parameters.From);
+                    activeCall = call;
+                    document.getElementById('acceptCall').disabled = false;
+                });
+
+                Twilio.Device.ready(function() {
+                    console.log('Twilio Device Ready');
+                });
+
+                Twilio.Device.error(function(error) {
+                    console.error('Twilio Device Error:', error);
+                });
+
+                Twilio.Device.disconnect(function(call) {
+                    console.log('Call disconnected');
+                    activeCall = null;
+                    document.getElementById('acceptCall').disabled = true;
+                    document.getElementById('hangupCall').disabled = true;
+                });
+            });
+
+        // 2️⃣ Start outgoing call
+        document.getElementById('startCall').onclick = function() {
+            const to = document.getElementById('candidateNumber').value;
+            if (!to) return alert('Enter candidate number');
+
+            fetch('/call', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `to=${encodeURIComponent(to)}`
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('Call response:', data);
+                if (data.call_sid) {
+                    alert('Call started! Waiting for candidate to pick up...');
+                } else {
+                    alert('Call failed: ' + data.error);
+                }
+            });
+        };
+
+        // 3️⃣ Accept incoming call
+        document.getElementById('acceptCall').onclick = async function() {
+            if (!activeCall) return;
+            try {
+                // Request mic access
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                Twilio.Device.audio.inputDevices.set(stream);
+                activeCall.accept();
+                document.getElementById('hangupCall').disabled = false;
+                document.getElementById('acceptCall').disabled = true;
+            } catch (err) {
+                console.error('Microphone access error:', err);
+            }
+        };
+
+        // 4️⃣ Hang up current call
+        document.getElementById('hangupCall').onclick = function() {
+            if (activeCall) activeCall.disconnect();
+        };
+
+        // 5️⃣ Attach audio output
+        const remoteAudio = document.getElementById('remoteAudio');
+        Twilio.Device.audio.speakerDevices.set([remoteAudio]);
+    </script>
 </body>
 </html>
