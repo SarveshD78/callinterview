@@ -21,7 +21,7 @@ client = Client(ACCOUNT_SID, AUTH_TOKEN)
 # Home page
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('under.html')
 
 # Start call to candidate
 @app.route('/call', methods=['POST'])
