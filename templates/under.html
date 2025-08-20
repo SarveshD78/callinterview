@@ -1,70 +1,18 @@
+<!-- Under.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Talexa Interview System</title>
-    <!-- Use latest Twilio Voice SDK -->
-    <script src="https://media.twiliocdn.com/sdk/js/voice/latest/twilio.min.js"></script>
 </head>
 <body>
     <h1>Talexa Interview System</h1>
 
-    <!-- Call form -->
     <input type="text" id="candidateNumber" placeholder="Enter candidate number">
     <button id="callButton">Call Candidate</button>
 
-    <!-- Incoming call -->
-    <div id="incomingCallDiv" style="display:none;">
-        <p id="incomingCallInfo"></p>
-        <button id="acceptCall">Accept</button>
-        <button id="rejectCall">Reject</button>
-    </div>
-
     <script>
-    let device;
-
-    async function getToken() {
-        const response = await fetch('/token');
-        const data = await response.json();
-        return data.token;
-    }
-
-    async function initTwilio() {
-        const token = await getToken();
-
-        // Setup Twilio Device using latest SDK
-        device = new Twilio.Voice.Device(token, { debug: true });
-
-        device.on('ready', () => {
-            console.log('Twilio Device Ready');
-        });
-
-        device.on('error', (error) => {
-            console.error('Twilio Device Error:', error);
-        });
-
-        device.on('incoming', (connection) => {
-            console.log('Incoming call from:', connection.parameters.From);
-            document.getElementById('incomingCallDiv').style.display = 'block';
-            document.getElementById('incomingCallInfo').innerText =
-                'Incoming call from: ' + connection.parameters.From;
-
-            document.getElementById('acceptCall').onclick = () => {
-                connection.accept();
-                document.getElementById('incomingCallDiv').style.display = 'none';
-            };
-
-            document.getElementById('rejectCall').onclick = () => {
-                connection.reject();
-                document.getElementById('incomingCallDiv').style.display = 'none';
-            };
-        });
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        initTwilio();
-
-        document.getElementById('callButton').addEventListener('click', async () => {
+        document.getElementById('callButton').addEventListener('click', async function() {
             const toNumber = document.getElementById('candidateNumber').value;
             if (!toNumber) return alert('Enter candidate number');
 
@@ -82,7 +30,6 @@
                 alert('Error starting call: ' + err);
             }
         });
-    });
     </script>
 </body>
 </html>
