@@ -94,6 +94,13 @@ TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")               # SKxxxxxxxx
 TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET")
 TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")                 # Your Twilio phone no.
 
+@app.route("/transcript", methods=["POST"])
+def transcript():
+    data = request.json
+    text = data.get("text")
+    if text:
+        socketio.emit("new_transcript", {"text": text})
+    return jsonify({"status": "ok"})
 
 # Serve frontend
 @app.route("/")
