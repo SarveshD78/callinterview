@@ -2,6 +2,11 @@
   "name": "twilio_call_app",
   "version": "1.0.0",
   "main": "index.js",
+  "dependencies": {
+    "@twilio/voice-sdk": "^2.15.0",
+    "events": "^3.3.0",
+    "loglevel": "^1.6.7"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -17,7 +22,7 @@
   },
   "homepage": "https://github.com/SarveshD78/callinterview#readme",
   "description": "",
-  "dependencies": {
-    "@twilio/voice-sdk": "^2.15.0"
+  "devDependencies": {
+    "webpack-cli": "^6.0.1"
   }
 }
