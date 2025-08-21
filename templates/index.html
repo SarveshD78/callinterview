@@ -1,97 +1,47 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Twilio Browser Call</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #logs { background: #f7f7f7; padding: 10px; border: 1px solid #ccc; height: 200px; overflow-y: auto; }
-        button { margin: 5px; }
-    </style>
-    <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
+  <title>Live Call with Transcript</title>
+  <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
 <body>
-    <h1>📞 Twilio Browser Call</h1>
+  <h2>Twilio Call + Live Transcript</h2>
 
-    <label>Phone Number:</label>
-    <input type="text" id="phoneNumber" placeholder="+91XXXXXXXXXX">
-    <br>
-    <button onclick="makeCall()">Call</button>
-    <button onclick="hangUp()">Hang Up</button>
+  <input type="text" id="phone" placeholder="Enter phone no" />
+  <button onclick="makeCall()">Call</button>
+  <button onclick="hangup()">Hangup</button>
 
-    <h2>Logs</h2>
-    <div id="logs"></div>
+  <h3>Transcript:</h3>
+  <div id="transcript" style="border:1px solid #ccc; padding:10px; width:400px; height:200px; overflow:auto;"></div>
 
-    <!-- Load Twilio SDK from static -->
-    <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
+  <script>
+    let device;
+    let socket = io();
 
-    <script>
-        let device;
+    async function setup() {
+      const res = await fetch("/token");
+      const data = await res.json();
+      device = new Twilio.Device(data.token, { debug: true });
+    }
 
-        function log(message) {
-            const logs = document.getElementById("logs");
-            logs.innerHTML += message + "<br>";
-            logs.scrollTop = logs.scrollHeight;
-            console.log(message);
-        }
+    function makeCall() {
+      const number = document.getElementById("phone").value;
+      device.connect({ To: number });
+    }
 
-        async function setupDevice() {
-            log("Fetching Twilio token...");
-            try {
-                const res = await fetch("/token");
-                const data = await res.json();
+    function hangup() {
+      device.disconnectAll();
+    }
 
-                if (!data.token) {
-                    log("❌ Failed to fetch token");
-                    return;
-                }
+    // Listen to transcripts
+    socket.on("transcript", data => {
+      let div = document.getElementById("transcript");
+      div.innerHTML += "<p>" + data.text + "</p>";
+      div.scrollTop = div.scrollHeight;
+    });
 
-                log("✅ Got Twilio token");
-
-                device = new Twilio.Device(data.token, {
-                    logLevel: 1, // Debug logging
-                    codecPreferences: ["opus", "pcmu"]
-                });
-
-                device.on("ready", () => log("🔔 Device is ready"));
-                device.on("error", (err) => log("❌ Error: " + err.message));
-                device.on("connect", () => log("🔗 Call connected"));
-                device.on("disconnect", () => log("❌ Call disconnected"));
-                device.on("incoming", (conn) => {
-                    log("📲 Incoming call");
-                    conn.accept();
-                });
-
-            } catch (e) {
-                log("❌ Exception while setting up device: " + e);
-            }
-        }
-
-        async function makeCall() {
-            const number = document.getElementById("phoneNumber").value;
-            if (!number) {
-                log("⚠️ Enter a phone number first");
-                return;
-            }
-
-            if (!device) {
-                log("⚠️ Device not ready yet");
-                return;
-            }
-
-            log("📞 Calling " + number + "...");
-            const conn = device.connect({ params: { To: number } });
-        }
-
-        function hangUp() {
-            if (device) {
-                log("📴 Hanging up...");
-                device.disconnectAll();
-            }
-        }
-
-        // Initialize on page load
-        setupDevice();
-    </script>
+    setup();
+  </script>
 </body>
 </html>

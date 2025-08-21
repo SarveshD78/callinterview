@@ -2,3 +2,5 @@ Flask==2.3.3
 twilio
 python-dotenv
 gunicorn==20.1.0
+Flask-SocketIO==5.3.6
+eventlet==0.36.1
