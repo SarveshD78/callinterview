@@ -9,13 +9,13 @@ app = Flask(__name__)
 # 🔑 Load Twilio credentials from env
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_TWIML_APP_SID = os.getenv("TWILIO_TWIML_APP_SID")
-TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")
+TWILIO_TWIML_APP_SID = os.getenv("TWILIO_TWIML_APP_SID")   # APxxxxxxxx
+TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")               # SKxxxxxxxx
 TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET")
-TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")                 # Your Twilio phone no.
 
 
-# Serve the frontend
+# Serve frontend
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -24,14 +24,20 @@ def index():
 # ✅ 1. Provide JWT Access Token to browser
 @app.route("/token")
 def token():
-    identity = "browser_user"
+    token = AccessToken(
+        TWILIO_ACCOUNT_SID,
+        TWILIO_API_KEY,
+        TWILIO_API_SECRET,
+        identity="browser_user"  # 👈 identity for Web Client
+    )
 
-    # Create token
-    token = AccessToken(TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, identity=identity)
-    voice_grant = VoiceGrant(outgoing_application_sid=TWILIO_TWIML_APP_SID, incoming_allow=True)
+    voice_grant = VoiceGrant(
+        outgoing_application_sid=TWILIO_TWIML_APP_SID,
+        incoming_allow=True
+    )
     token.add_grant(voice_grant)
 
-    return jsonify({"token": token.to_jwt().decode()})
+    return jsonify({"token": token.to_jwt()})
 
 
 # ✅ 2. TwiML: What happens when browser makes a call
@@ -42,7 +48,8 @@ def voice():
 
     if to_number:
         # Call a real phone number
-        response.dial(callerId=TWILIO_NUMBER).number(to_number)
+        dial = response.dial(callerId=TWILIO_NUMBER)
+        dial.number(to_number)
     else:
         # If no number → connect back to client
         response.dial().client("browser_user")
@@ -50,7 +57,7 @@ def voice():
     return str(response)
 
 
-# ✅ 3. Fallback (in case of TwiML failure)
+# ✅ 3. Fallback (if TwiML App fails)
 @app.route("/fallback", methods=["POST"])
 def fallback():
     app.logger.error("Fallback triggered: %s", request.values)
