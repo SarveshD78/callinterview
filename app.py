@@ -6,12 +6,11 @@ from twilio.twiml.voice_response import VoiceResponse
 
 app = Flask(__name__)
 
-# Env variables
-ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
-API_KEY_SID = os.environ.get("TWILIO_API_KEY_SID")
-API_KEY_SECRET = os.environ.get("TWILIO_API_KEY_SECRET")
-APP_SID = os.environ.get("TWILIO_APP_SID")
-CALLER_ID = os.environ.get("TWILIO_CALLER_ID")
+# Load env variables
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_TWIML_APP_SID = os.getenv("TWILIO_TWIML_APP_SID")
+TWILIO_NUMBER = os.getenv("TWILIO_NUMBER")
 
 
 @app.route("/")
@@ -19,43 +18,55 @@ def index():
     return render_template("index.html")
 
 
+# ✅ Generate Twilio Capability Token for browser client
 @app.route("/token")
 def token():
-    identity = "user-browser"
-    token = AccessToken(ACCOUNT_SID, API_KEY_SID, API_KEY_SECRET, identity=identity)
-    voice_grant = VoiceGrant(outgoing_application_sid=APP_SID, incoming_allow=True)
+    identity = "browser_user"
+    token = AccessToken(
+        TWILIO_ACCOUNT_SID,
+        os.getenv("TWILIO_API_KEY_SID"),     # optional if you created API Key
+        os.getenv("TWILIO_API_KEY_SECRET"), # optional if you created API Key
+        identity=identity,
+    )
+
+    # Use VoiceGrant
+    voice_grant = VoiceGrant(
+        outgoing_application_sid=TWILIO_TWIML_APP_SID,
+        incoming_allow=True
+    )
     token.add_grant(voice_grant)
-    return jsonify(identity=identity, token=token.to_jwt().decode("utf-8"))
+
+    return jsonify(identity=identity, token=token.to_jwt().decode())
 
 
-# 1️⃣ Main Voice URL
+# ✅ TwiML for outbound call
 @app.route("/voice", methods=["POST"])
 def voice():
-    to_number = request.form.get("To")
+    to_number = request.values.get("To")
+
     response = VoiceResponse()
     if to_number:
-        dial = response.dial(callerId=CALLER_ID)
+        # Dial out to phone
+        dial = response.dial(callerId=TWILIO_NUMBER)
         dial.number(to_number)
     else:
-        response.say("No number provided.")
-    print("[VOICE LOG]", request.form)
+        response.say("Thanks for calling!")
+
     return str(response)
 
 
-# 2️⃣ Fallback URL
+# ✅ Fallback (when Twilio cannot reach /voice)
 @app.route("/fallback", methods=["POST"])
 def fallback():
-    print("[FALLBACK LOG]", request.form)
-    response = VoiceResponse()
-    response.say("We are sorry, something went wrong with your call.")
-    return str(response)
+    print("⚠️ Fallback called:", request.values)
+    return str(VoiceResponse().say("An error occurred, please try again later."))
 
 
-# 3️⃣ Status Callback URL
+# ✅ Call status callback
 @app.route("/status", methods=["POST"])
 def status():
-    print("[STATUS LOG]", request.form)
-    return ("", 204)
+    print("📞 Call status update:", request.values)
+    return "OK"
 
 
 if __name__ == "__main__":
