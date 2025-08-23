@@ -1,68 +1,97 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interview Call</title>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="https://media.twiliocdn.com/sdk/js/video/releases/2.26.1/twilio.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #transcript { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; }
-        #controls { margin-top: 20px; }
-        button { padding: 10px 20px; margin-right: 10px; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Interview Call + Live Transcript</title>
+  <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    input, button { padding: 8px 12px; font-size: 14px; }
+    button { cursor: pointer; }
+    #status { font-size: 13px; color: #555; margin-bottom: 16px; }
+    #transcript { border: 1px solid #ddd; background: #fafafa; padding: 12px; width: 100%; max-width: 760px; height: 320px; overflow-y: auto; line-height: 1.5; }
+    #transcript p { margin: 4px 0; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #eee; margin-left: 6px; }
+  </style>
 </head>
 <body>
-    <h1>Interview Call with Live Transcript</h1>
-    
-    <div id="controls">
-        <input type="text" id="toNumber" placeholder="Enter phone number">
-        <button id="callBtn">Call</button>
-    </div>
-    
-    <h2>Transcript:</h2>
-    <div id="transcript"></div>
+  <h2>📞 Interview — Browser + Phone with Live Transcript</h2>
 
-    <script>
-        const transcriptDiv = document.getElementById('transcript');
-        const callBtn = document.getElementById('callBtn');
-        const toNumberInput = document.getElementById('toNumber');
+  <div id="status">Initializing…</div>
 
-        // Connect Socket.IO
-        const socket = io();
-        socket.on('connect', () => {
-            console.log('Connected to server for transcripts');
+  <div class="row">
+    <input type="text" id="candidate" placeholder="+919876543210" style="min-width:260px;" />
+    <button id="callBtn">Call Candidate</button>
+    <button id="hangupBtn">Hangup</button>
+    <span class="pill" id="callState">call: idle</span>
+  </div>
+
+  <h3>Live Transcript</h3>
+  <div id="transcript">(waiting…)</div>
+
+  <script>
+    const transcriptDiv = document.getElementById("transcript");
+    const callStateEl = document.getElementById("callState");
+
+    const socket = io();
+
+    function log(line) {
+      const p = document.createElement("p");
+      p.textContent = line;
+      transcriptDiv.appendChild(p);
+      transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+    }
+
+    socket.on("new_transcript", data => {
+      if (!data) return;
+      const text = data.transcript || data.text;
+      if (!text) return;
+      const who  = data.channel || "both";
+      const tag  = data.is_final ? "✔" : "…";
+      log(`[${who}] ${text} ${tag}`);
+    });
+
+    async function callCandidate() {
+      const number = document.getElementById("candidate").value.trim();
+      if (!number) { alert("Enter candidate number"); return; }
+
+      callStateEl.textContent = "call: dialing…";
+
+      try {
+        const res = await fetch("/call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: number })
         });
+        const j = await res.json();
+        if (j.call_sid) {
+          log("📞 Candidate call started (CallSid: " + j.call_sid + ")");
+          callStateEl.textContent = "call: in-progress";
+        } else {
+          log("❌ Call failed");
+          callStateEl.textContent = "call: error";
+        }
+      } catch (e) {
+        console.error(e);
+        log("❌ Call error: " + e.message);
+        callStateEl.textContent = "call: error";
+      }
+    }
 
-        socket.on('new_transcript', (data) => {
-            if (data.text) {
-                const p = document.createElement('p');
-                p.textContent = data.text;
-                transcriptDiv.appendChild(p);
-                transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
-            }
-        });
+    async function hangup() {
+      try {
+        await fetch("/hangup", { method: "POST" });
+        callStateEl.textContent = "call: idle";
+        log("Call hung up");
+      } catch (e) {
+        console.error(e);
+      }
+    }
 
-        // Make a call via Flask endpoint
-        callBtn.addEventListener('click', async () => {
-            const to = toNumberInput.value.trim();
-            if (!to) return alert('Enter a phone number');
-
-            try {
-                const res = await fetch('/call', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ to })
-                });
-                const data = await res.json();
-                if (data.call_sid) alert('Call started: ' + data.call_sid);
-                else alert('Error: ' + JSON.stringify(data));
-            } catch (err) {
-                console.error(err);
-                alert('Call failed');
-            }
-        });
-    </script>
+    document.getElementById("callBtn").addEventListener("click", callCandidate);
+    document.getElementById("hangupBtn").addEventListener("click", hangup);
+  </script>
 </body>
 </html>
