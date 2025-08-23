@@ -1,7 +1,7 @@
 Flask==2.3.3
 Flask-SocketIO==5.3.6
-twilio
-python-dotenv
 gunicorn==20.1.0
-gevent==24.2.1
-websockets==11.0.3   # <— important for Twilio Media Streams
+gevent==23.9.1
+greenlet==3.0.3
+twilio==9.2.3
+python-dotenv==1.0.1
