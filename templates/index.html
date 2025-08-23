@@ -1,104 +1,199 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Live Call with Transcript</title>
+  <meta charset="UTF-8" />
+  <title>Interview Call + Live Transcript</title>
+
+  <!-- Twilio JS Client (Programmable Voice) -->
   <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+  <!-- Socket.IO for real-time transcripts -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-    }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    input, button { padding: 8px 12px; font-size: 14px; }
+    button { cursor: pointer; }
+    #status { font-size: 13px; color: #555; margin-bottom: 16px; }
     #transcript {
-      border: 1px solid #ccc;
-      padding: 10px;
-      width: 100%;
-      max-width: 600px;
-      height: 250px;
-      overflow-y: auto;
-      background: #fafafa;
+      border: 1px solid #ddd; background: #fafafa; padding: 12px;
+      width: 100%; max-width: 760px; height: 320px; overflow-y: auto; line-height: 1.5;
     }
-    #transcript p {
-      margin: 5px 0;
-    }
-    .controls {
-      margin-bottom: 20px;
-    }
-    input, button {
-      padding: 6px 10px;
-      margin-right: 8px;
-    }
+    #transcript p { margin: 4px 0; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #eee; margin-left: 6px; }
   </style>
 </head>
 <body>
-  <h2>📞 Twilio Call + Live Transcript</h2>
+  <h2>📞 Interview — Browser + Phone with Live Transcript</h2>
 
-  <div class="controls">
-    <input type="text" id="phone" placeholder="Enter phone number" />
-    <button onclick="makeCall()">Call</button>
-    <button onclick="hangup()">Hangup</button>
+  <div id="status">Initializing…</div>
+
+  <div class="row">
+    <button id="joinBtn">Join from Browser</button>
+    <span class="pill" id="deviceState">device: init</span>
+    <span class="pill" id="callState">call: idle</span>
   </div>
 
-  <h3>Live Transcript:</h3>
-<div id="transcript">(waiting for audio...)</div>
+  <div class="row">
+    <input type="text" id="candidate" placeholder="+919876543210" style="min-width:260px;" />
+    <button id="callBtn">Call Candidate</button>
+    <button id="hangupBtn">Hangup</button>
+  </div>
 
+  <h3>Live Transcript</h3>
+  <div id="transcript">(waiting…)</div>
 
   <script>
-    let device;
-    const socket = io();
+    let device = null;
+    let connection = null;
+
+    const statusEl = document.getElementById("status");
+    const deviceStateEl = document.getElementById("deviceState");
+    const callStateEl = document.getElementById("callState");
     const transcriptDiv = document.getElementById("transcript");
 
-    // Get a capability token from Flask backend and setup device
-    async function setup() {
+    const socket = io();
+
+    // Helper logging
+    function log(line) {
+      console.log("[UI]", line);
+      const p = document.createElement("p");
+      p.textContent = line;
+      transcriptDiv.appendChild(p);
+      transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+    }
+
+    function setDeviceState(s) {
+      console.log("[Device State] ->", s);
+      deviceStateEl.textContent = "device: " + s;
+    }
+    function setCallState(s) {
+      console.log("[Call State] ->", s);
+      callStateEl.textContent = "call: " + s;
+    }
+
+    // Listen for transcripts from backend
+    socket.on("connect", () => {
+      console.log("[Socket.IO] Connected", socket.id);
+    });
+    socket.on("disconnect", () => {
+      console.log("[Socket.IO] Disconnected");
+    });
+    socket.on("new_transcript", data => {
+      console.log("[Socket.IO] new_transcript event:", data);
+      if (!data) return;
+      const text = data.transcript || data.text;
+      if (!text) return;
+      const who  = data.channel || "both";
+      const tag  = data.is_final ? "✔" : "…";
+      log(`[${who}] ${text} ${tag}`);
+    });
+
+    // Fetch token & setup Twilio.Device
+    async function setupDevice() {
+      console.log("[Setup] Fetching Twilio token...");
+      statusEl.textContent = "Requesting Twilio access token…";
+
       try {
         const res = await fetch("/token");
-        const data = await res.json();
-        device = new Twilio.Device(data.token, { debug: true });
+        console.log("[Setup] /token response status", res.status);
+        const payload = await res.json();
+        console.log("[Setup] Received token payload", payload);
+
+        const token = payload.token;
+        device = new Twilio.Device(token, { debug: true });
 
         device.on("ready", () => {
-          console.log("Twilio.Device is ready for calls.");
+          console.log("[Twilio.Device] ready");
+          setDeviceState("ready");
+          statusEl.textContent = "Device ready. Click “Join from Browser” to enter the room.";
         });
 
-        device.on("error", error => {
-          console.error("Twilio.Device Error:", error);
+        device.on("error", (err) => {
+          console.error("[Twilio.Device] error", err);
+          setDeviceState("error");
+          statusEl.textContent = "Device error: " + err.message;
         });
 
-        device.on("disconnect", () => {
-          console.log("Call ended.");
+        device.on("connect", (conn) => {
+          console.log("[Twilio.Device] connect", conn);
+          connection = conn;
+          setCallState("in-progress");
+          statusEl.textContent = "In conference. Now you can dial the candidate.";
         });
+
+        device.on("disconnect", (conn) => {
+          console.log("[Twilio.Device] disconnect", conn);
+          connection = null;
+          setCallState("idle");
+          statusEl.textContent = "Disconnected.";
+        });
+
+        device.on("incoming", (conn) => {
+          console.log("[Twilio.Device] incoming call", conn.parameters);
+        });
+
       } catch (err) {
-        console.error("Error setting up Twilio Device:", err);
+        console.error("[Setup] Failed to setup Twilio.Device", err);
+        setDeviceState("error");
+        statusEl.textContent = "Failed to set up device: " + err.message;
       }
     }
 
-    function makeCall() {
-      const number = document.getElementById("phone").value.trim();
-      if (!number) {
-        alert("Please enter a phone number first!");
-        return;
+    // Browser joins conference
+    function joinFromBrowser() {
+      if (!device) { console.warn("[Join] Device not ready"); return; }
+      console.log("[Join] Connecting browser to conference...");
+      statusEl.textContent = "Joining conference from browser…";
+      device.connect({});
+    }
+
+    // Server dials candidate
+    async function callCandidate() {
+      const number = document.getElementById("candidate").value.trim();
+      if (!number) { alert("Enter candidate number"); return; }
+
+      console.log("[Call] Dialing candidate", number);
+      statusEl.textContent = "Dialing candidate " + number + "…";
+
+      try {
+        const res = await fetch("/call", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to: number })
+        });
+        console.log("[Call] /call response status", res.status);
+
+        if (!res.ok) {
+          const t = await res.text();
+          console.error("[Call] Failed response", t);
+          statusEl.textContent = "Failed to dial: " + t;
+          return;
+        }
+        const j = await res.json();
+        console.log("[Call] Call created", j);
+        statusEl.textContent = "Dialed candidate (CallSid: " + j.call_sid + "). Waiting for answer…";
+      } catch (err) {
+        console.error("[Call] Error", err);
+        statusEl.textContent = "Call failed: " + err.message;
       }
-      console.log("Calling", number);
-      device.connect({ To: number });
     }
 
     function hangup() {
-      console.log("Hanging up call");
-      device.disconnectAll();
+      console.log("[Hangup] Disconnecting all calls");
+      if (device) device.disconnectAll();
     }
 
-    // 📌 Listen for incoming transcript lines via Socket.IO
-    socket.on("new_transcript", data => {
-      if (data && data.text) {
-        const p = document.createElement("p");
-        p.textContent = data.text;
-        transcriptDiv.appendChild(p);
-        transcriptDiv.scrollTop = transcriptDiv.scrollHeight; // auto-scroll
-      }
-    });
+    // Wire up UI
+    document.getElementById("joinBtn").addEventListener("click", joinFromBrowser);
+    document.getElementById("callBtn").addEventListener("click", callCandidate);
+    document.getElementById("hangupBtn").addEventListener("click", hangup);
 
-    // Initialize on page load
-    setup();
+    // Boot
+    console.log("[Boot] Initializing app...");
+    setDeviceState("starting");
+    setupDevice();
   </script>
 </body>
 </html>
