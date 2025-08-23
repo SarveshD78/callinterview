@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <title>Interview Call + Transcript</title>
 
-  <!-- Twilio JS Client (Programmable Voice) -->
+  <!-- Twilio JS Client -->
   <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
 
   <!-- Socket.IO for real-time transcripts -->
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
 
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
@@ -71,7 +71,7 @@
       log(`[${who}] ${text} ${tag}`);
     });
 
-    // --- initialize device (but don't connect yet) ---
+    // --- initialize device ---
     async function setupDevice() {
       statusEl.textContent = "Getting Twilio token…";
       const res = await fetch("/token");
@@ -82,13 +82,13 @@
 
       device.on("ready", () => {
         setDeviceState("ready");
-        statusEl.textContent = "Device ready. Enter number and press Call.";
+        statusEl.textContent = "✅ Ready. Enter number and click Call Candidate.";
       });
 
       device.on("connect", (conn) => {
         connection = conn;
         setCallState("in-conference");
-        statusEl.textContent = "✅ Browser connected to conference. Candidate is being called.";
+        statusEl.textContent = "Browser connected to conference. Candidate is being called…";
       });
 
       device.on("disconnect", () => {
@@ -104,29 +104,40 @@
       });
     }
 
-    // --- click "Call Candidate" ---
+    // --- call candidate flow ---
     async function callCandidate() {
       const number = document.getElementById("candidate").value.trim();
       if (!number) { alert("Enter candidate number"); return; }
-
       if (!device) { alert("Device not ready yet"); return; }
 
-      // Step 1: Browser joins conference immediately
-      statusEl.textContent = "Joining conference and dialing " + number + "…";
-      device.connect({}); // triggers TwiML /voice -> <Conference>
+      // 1. Resume audio context (fixes Chrome autoplay block)
+      if (typeof AudioContext !== "undefined") {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (ctx.state === "suspended") {
+            await ctx.resume();
+          }
+        } catch (e) {
+          console.warn("AudioContext resume failed", e);
+        }
+      }
 
-      // Step 2: Ask backend to dial candidate into same conference
+      // 2. Browser joins conference
+      statusEl.textContent = "Joining conference…";
+      device.connect({}); 
+
+      // 3. Dial candidate into same conference
       const res = await fetch("/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to: number })
       });
-      if (!res.ok) {
+      if (res.ok) {
+        const j = await res.json();
+        log("📞 Candidate call started (CallSid: " + j.call_sid + ")");
+      } else {
         statusEl.textContent = "❌ Failed to dial candidate";
-        return;
       }
-      const j = await res.json();
-      log("📞 Candidate call started (CallSid: " + j.call_sid + ")");
     }
 
     function hangup() {
@@ -144,5 +155,4 @@
     });
   </script>
 </body>
-
 </html>
