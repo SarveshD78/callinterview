@@ -96,16 +96,7 @@ def voice():
 
     resp = VoiceResponse()
 
-    with resp.start() as start:
-        print("[/voice] Starting transcription stream")
-        start.transcription(
-            track="both",
-            language="en-US",
-            interim_results=True,
-            webhook_url=absolute_url("/transcripts")
-        )
-
-    print("[/voice] Adding conference to response")
+    # Just conference — no transcription (yet)
     dial = resp.dial(callerId=TWILIO_NUMBER)
     dial.conference(
         CONFERENCE_NAME,
@@ -116,6 +107,7 @@ def voice():
 
     print("[/voice] Returning TwiML to Twilio")
     return Response(str(resp), mimetype="text/xml")
+
 
 @app.route("/transcripts", methods=["POST"])
 def transcripts():
