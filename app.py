@@ -68,7 +68,6 @@ def start_assemblyai_ws():
     thread.start()
 
 
-@app.before_first_request
 def init_ws():
     print("[INIT] Starting AssemblyAI WS…")
     start_assemblyai_ws()
