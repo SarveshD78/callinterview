@@ -1,20 +1,19 @@
 import os
 import json
 import threading
-import requests
-import websocket
 from flask import Flask, request, jsonify, render_template, Response
 from flask_socketio import SocketIO
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.rest import Client as TwilioRestClient
 from twilio.twiml.voice_response import VoiceResponse
+import websocket
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # -----------------------------
-# 🔑 Env
+# 🔑 Environment variables
 # -----------------------------
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -29,14 +28,13 @@ twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 CONFERENCE_NAME = "interview_room"
 
 # -----------------------------
-# AssemblyAI WS session
+# AssemblyAI WS
 # -----------------------------
 assemblyai_ws = None
 
 def start_assemblyai_ws():
     global assemblyai_ws
     url = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
-    headers = {"Authorization": ASSEMBLYAI_API_KEY}
 
     def on_open(ws):
         print("[AssemblyAI] ✅ WebSocket opened")
@@ -67,9 +65,9 @@ def start_assemblyai_ws():
     thread = threading.Thread(target=ws.run_forever, daemon=True)
     thread.start()
 
-
+@app.before_first_request
 def init_ws():
-    print("[INIT] Starting AssemblyAI WS…")
+    print("[INIT] Starting AssemblyAI WebSocket…")
     start_assemblyai_ws()
 
 # -----------------------------
@@ -120,9 +118,10 @@ def call_candidate():
 def voice():
     resp = VoiceResponse()
 
-    # Add <Stream> for AssemblyAI
+    # Start streaming to AssemblyAI
     resp.start().stream(url=absolute_url("/media"))
 
+    # Join the conference
     dial = resp.dial(callerId=TWILIO_NUMBER)
     dial.conference(
         CONFERENCE_NAME,
@@ -138,12 +137,8 @@ def media():
     try:
         data = request.get_json(force=True)
         if data.get("event") == "media":
-            # Twilio sends base64 PCM u-law — send to AssemblyAI
             if assemblyai_ws:
-                msg = json.dumps({
-                    "audio_data": data["media"]["payload"]
-                })
-                assemblyai_ws.send(msg)
+                assemblyai_ws.send(json.dumps({"audio_data": data["media"]["payload"]}))
     except Exception as e:
         print("[/media] ERROR:", e)
     return ("", 200)
@@ -153,11 +148,17 @@ def status():
     print("[/status]", dict(request.values))
     return ("", 200)
 
+# -----------------------------
+# Helpers
+# -----------------------------
 def absolute_url(path: str) -> str:
     base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else request.url_root.rstrip("/")
     if not base.startswith("http"):
         base = "https://" + base.lstrip("/")
     return f"{base}{path}"
 
+# -----------------------------
+# Dev server
+# -----------------------------
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)

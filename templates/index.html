@@ -2,21 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Interview Call + Transcript</title>
+  <title>Interview Call + Live Transcript</title>
 
   <!-- Twilio JS Client -->
   <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
 
-  <!-- Socket.IO for real-time transcripts -->
+  <!-- Socket.IO for live transcripts -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    h2 { margin-bottom: 8px; }
     .row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
     input, button { padding: 8px 12px; font-size: 14px; }
-    button { cursor: pointer; border-radius: 6px; border: 1px solid #ccc; background: #f9f9f9; }
-    button:hover { background: #eee; }
+    button { cursor: pointer; }
     #status { font-size: 13px; color: #555; margin-bottom: 16px; }
     #transcript {
       border: 1px solid #ddd; background: #fafafa; padding: 12px;
@@ -73,7 +71,7 @@
       log(`[${who}] ${text} ${tag}`);
     });
 
-    // --- initialize device ---
+    // --- initialize Twilio device ---
     async function setupDevice() {
       statusEl.textContent = "Getting Twilio token…";
       const res = await fetch("/token");
@@ -106,29 +104,27 @@
       });
     }
 
-    // --- call candidate flow ---
+    // --- call candidate ---
     async function callCandidate() {
       const number = document.getElementById("candidate").value.trim();
       if (!number) { alert("Enter candidate number"); return; }
       if (!device) { alert("Device not ready yet"); return; }
 
-      // 1. Resume audio context (fixes Chrome autoplay block)
+      // Resume audio context for browsers
       if (typeof AudioContext !== "undefined") {
         try {
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          if (ctx.state === "suspended") {
-            await ctx.resume();
-          }
+          if (ctx.state === "suspended") await ctx.resume();
         } catch (e) {
           console.warn("AudioContext resume failed", e);
         }
       }
 
-      // 2. Browser joins conference
+      // Browser joins conference
       statusEl.textContent = "Joining conference…";
       device.connect({}); 
 
-      // 3. Dial candidate into same conference
+      // Dial candidate via Twilio REST
       const res = await fetch("/call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -149,7 +145,7 @@
     document.getElementById("callBtn").addEventListener("click", callCandidate);
     document.getElementById("hangupBtn").addEventListener("click", hangup);
 
-    // Boot
+    // Boot device
     setDeviceState("starting");
     setupDevice().catch(err => {
       setDeviceState("error");
