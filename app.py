@@ -1,19 +1,21 @@
 import os
 import json
 import threading
+import base64
+import websocket
+import audioop
 from flask import Flask, request, jsonify, render_template, Response
 from flask_socketio import SocketIO
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.rest import Client as TwilioRestClient
 from twilio.twiml.voice_response import VoiceResponse
-import websocket
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # -----------------------------
-# 🔑 Environment variables
+# 🔑 Env
 # -----------------------------
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -28,7 +30,7 @@ twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 CONFERENCE_NAME = "interview_room"
 
 # -----------------------------
-# AssemblyAI WS
+# AssemblyAI WS session
 # -----------------------------
 assemblyai_ws = None
 
@@ -67,7 +69,7 @@ def start_assemblyai_ws():
 
 
 def init_ws():
-    print("[INIT] Starting AssemblyAI WebSocket…")
+    print("[INIT] Starting AssemblyAI WS…")
     start_assemblyai_ws()
 
 # -----------------------------
@@ -118,10 +120,9 @@ def call_candidate():
 def voice():
     resp = VoiceResponse()
 
-    # Start streaming to AssemblyAI
-    resp.start().stream(url=absolute_url("/media"))
+    # Stream Twilio audio to /media
+    resp.start(Stream(url=absolute_url("/media")))
 
-    # Join the conference
     dial = resp.dial(callerId=TWILIO_NUMBER)
     dial.conference(
         CONFERENCE_NAME,
@@ -137,8 +138,21 @@ def media():
     try:
         data = request.get_json(force=True)
         if data.get("event") == "media":
+            payload_b64 = data["media"]["payload"]
+
+            # Decode Twilio μ-law audio
+            ulaw_bytes = base64.b64decode(payload_b64)
+            pcm16_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
+
+            # Resample from 8kHz → 16kHz
+            pcm16_16k = audioop.ratecv(pcm16_bytes, 2, 1, 8000, 16000, None)[0]
+
+            # Encode to base64 for AssemblyAI
+            msg = json.dumps({
+                "audio_data": base64.b64encode(pcm16_16k).decode("utf-8")
+            })
             if assemblyai_ws:
-                assemblyai_ws.send(json.dumps({"audio_data": data["media"]["payload"]}))
+                assemblyai_ws.send(msg)
     except Exception as e:
         print("[/media] ERROR:", e)
     return ("", 200)
@@ -148,17 +162,11 @@ def status():
     print("[/status]", dict(request.values))
     return ("", 200)
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def absolute_url(path: str) -> str:
     base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else request.url_root.rstrip("/")
     if not base.startswith("http"):
         base = "https://" + base.lstrip("/")
     return f"{base}{path}"
 
-# -----------------------------
-# Dev server
-# -----------------------------
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
