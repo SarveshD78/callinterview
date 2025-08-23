@@ -65,7 +65,7 @@ def start_assemblyai_ws():
     thread = threading.Thread(target=ws.run_forever, daemon=True)
     thread.start()
 
-@app.before_first_request
+
 def init_ws():
     print("[INIT] Starting AssemblyAI WebSocket…")
     start_assemblyai_ws()
