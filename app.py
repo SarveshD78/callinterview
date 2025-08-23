@@ -90,23 +90,28 @@ def call_candidate():
     print(f"[/call] Call created with SID: {call.sid}")
     return jsonify({"call_sid": call.sid})
 
-@app.route("/voice", methods=["POST"])
+from flask import Flask, request
+from twilio.twiml.voice_response import VoiceResponse, Dial
+
+app = Flask(__name__)
+
+@app.route("/voice", methods=['POST'])
 def voice():
-    print("[ROUTE /voice] Twilio requested TwiML")
+    """Twilio hits this whenever a call (browser or candidate) connects"""
+    response = VoiceResponse()
+    dial = Dial()
 
-    resp = VoiceResponse()
-
-    # Just conference — no transcription (yet)
-    dial = resp.dial(callerId=TWILIO_NUMBER)
+    # fixed room name — browser & phone MUST match this
     dial.conference(
-        CONFERENCE_NAME,
-        record="record-from-start",
+        "InterviewRoom",  # <--- important: consistent name!
         start_conference_on_enter=True,
-        end_conference_on_exit=True
+        end_conference_on_exit=True,
+        record="record-from-start"   # optional, if you want recordings
     )
 
-    print("[/voice] Returning TwiML to Twilio")
-    return Response(str(resp), mimetype="text/xml")
+    response.append(dial)
+    return str(response)
+
 
 
 @app.route("/transcripts", methods=["POST"])
