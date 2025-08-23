@@ -1,4 +1,8 @@
 import os
+import json
+import threading
+import requests
+import websocket
 from flask import Flask, request, jsonify, render_template, Response
 from flask_socketio import SocketIO
 from twilio.jwt.access_token import AccessToken
@@ -10,7 +14,7 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # -----------------------------
-# 🔑 Required env variables
+# 🔑 Env
 # -----------------------------
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -19,66 +23,90 @@ TWILIO_API_KEY       = os.getenv("TWILIO_API_KEY")
 TWILIO_API_SECRET    = os.getenv("TWILIO_API_SECRET")
 TWILIO_NUMBER        = os.getenv("TWILIO_NUMBER")
 PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL")
+ASSEMBLYAI_API_KEY   = os.getenv("ASSEMBLYAI_API_KEY")
 
-print("[INIT] Loading environment variables...")
-print(f"[INIT] TWILIO_ACCOUNT_SID: {TWILIO_ACCOUNT_SID}")
-print(f"[INIT] TWILIO_TWIML_APP_SID: {TWILIO_TWIML_APP_SID}")
-print(f"[INIT] TWILIO_NUMBER: {TWILIO_NUMBER}")
-print(f"[INIT] PUBLIC_BASE_URL: {PUBLIC_BASE_URL}")
-
-# Twilio REST client
 twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
 CONFERENCE_NAME = "interview_room"
+
+# -----------------------------
+# AssemblyAI WS session
+# -----------------------------
+assemblyai_ws = None
+
+def start_assemblyai_ws():
+    global assemblyai_ws
+    url = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+    headers = {"Authorization": ASSEMBLYAI_API_KEY}
+
+    def on_open(ws):
+        print("[AssemblyAI] ✅ WebSocket opened")
+
+    def on_message(ws, msg):
+        try:
+            data = json.loads(msg)
+            if "text" in data:
+                socketio.emit("new_transcript", data)
+        except Exception as e:
+            print("[AssemblyAI] Parse error:", e)
+
+    def on_error(ws, err):
+        print("[AssemblyAI] ❌ WebSocket error:", err)
+
+    def on_close(ws, *_):
+        print("[AssemblyAI] 🔒 WebSocket closed")
+
+    ws = websocket.WebSocketApp(
+        url,
+        header=[f"Authorization: {ASSEMBLYAI_API_KEY}"],
+        on_open=on_open,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close
+    )
+    assemblyai_ws = ws
+    thread = threading.Thread(target=ws.run_forever, daemon=True)
+    thread.start()
+
+
+@app.before_first_request
+def init_ws():
+    print("[INIT] Starting AssemblyAI WS…")
+    start_assemblyai_ws()
 
 # -----------------------------
 # Routes
 # -----------------------------
 @app.route("/")
 def index():
-    print("[ROUTE /] Rendering index.html")
     return render_template("index.html")
 
 @app.route("/token")
 def token():
-    print("[ROUTE /token] Generating token for browser user")
     identity = "browser_user"
-
     token = AccessToken(
         TWILIO_ACCOUNT_SID,
         TWILIO_API_KEY,
         TWILIO_API_SECRET,
         identity=identity
     )
-    print("[/token] AccessToken created")
-
     voice_grant = VoiceGrant(
         outgoing_application_sid=TWILIO_TWIML_APP_SID,
         incoming_allow=True
     )
     token.add_grant(voice_grant)
-    print("[/token] VoiceGrant added")
-
     jwt_token = token.to_jwt()
     if hasattr(jwt_token, "decode"):
         jwt_token = jwt_token.decode("utf-8")
-    print("[/token] Returning JWT token")
     return jsonify({"token": jwt_token})
 
 @app.route("/call", methods=["POST"])
 def call_candidate():
-    print("[ROUTE /call] Incoming request to call candidate")
     data = request.get_json(force=True)
-    print(f"[/call] Request JSON: {data}")
-
     to_number = data.get("to")
     if not to_number:
-        print("[/call] ERROR: Missing 'to' phone number")
         return jsonify({"error": "Missing 'to' phone number"}), 400
 
     voice_url = absolute_url("/voice")
-    print(f"[/call] Dialing {to_number} from {TWILIO_NUMBER}, voice_url={voice_url}")
-
     call = twilio_client.calls.create(
         to=to_number,
         from_=TWILIO_NUMBER,
@@ -87,16 +115,15 @@ def call_candidate():
         status_callback_event=["initiated", "ringing", "answered", "completed"],
         status_callback_method="POST"
     )
-    print(f"[/call] Call created with SID: {call.sid}")
     return jsonify({"call_sid": call.sid})
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    print("[ROUTE /voice] Twilio requested TwiML")
-
     resp = VoiceResponse()
 
-    # Just conference — no transcription (yet)
+    # Add <Stream> for AssemblyAI
+    resp.start().stream(url=absolute_url("/media"))
+
     dial = resp.dial(callerId=TWILIO_NUMBER)
     dial.conference(
         CONFERENCE_NAME,
@@ -104,52 +131,34 @@ def voice():
         start_conference_on_enter=True,
         end_conference_on_exit=True
     )
-
-    print("[/voice] Returning TwiML to Twilio")
     return Response(str(resp), mimetype="text/xml")
 
-
-@app.route("/transcripts", methods=["POST"])
-def transcripts():
-    print("[ROUTE /transcripts] Got transcription event")
+@app.route("/media", methods=["POST"])
+def media():
+    global assemblyai_ws
     try:
         data = request.get_json(force=True)
+        if data.get("event") == "media":
+            # Twilio sends base64 PCM u-law — send to AssemblyAI
+            if assemblyai_ws:
+                msg = json.dumps({
+                    "audio_data": data["media"]["payload"]
+                })
+                assemblyai_ws.send(msg)
     except Exception as e:
-        print(f"[/transcripts] ERROR parsing JSON: {e}")
-        return ("", 400)
-
-    print(f"[/transcripts] Data: {data}")
-    socketio.emit("new_transcript", data)
-    print("[/transcripts] Emitted new_transcript to browser via Socket.IO")
-    return ("", 204)
+        print("[/media] ERROR:", e)
+    return ("", 200)
 
 @app.route("/status", methods=["POST"])
 def status():
-    print("[ROUTE /status] Call status update received")
-    info = {
-        "CallSid": request.values.get("CallSid"),
-        "CallStatus": request.values.get("CallStatus"),
-        "From": request.values.get("From"),
-        "To": request.values.get("To"),
-        "Timestamp": request.values.get("Timestamp")
-    }
-    print(f"[/status] {info}")
+    print("[/status]", dict(request.values))
     return ("", 200)
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def absolute_url(path: str) -> str:
     base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else request.url_root.rstrip("/")
     if not base.startswith("http"):
         base = "https://" + base.lstrip("/")
-    full_url = f"{base}{path}"
-    print(f"[HELPER absolute_url] Built URL: {full_url}")
-    return full_url
+    return f"{base}{path}"
 
-# -----------------------------
-# Dev server
-# -----------------------------
 if __name__ == "__main__":
-    print("[MAIN] Starting Flask-SocketIO server on 0.0.0.0:5000")
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)

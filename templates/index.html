@@ -10,12 +10,13 @@
   <!-- Socket.IO for real-time transcripts -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
-
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    h2 { margin-bottom: 8px; }
     .row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
     input, button { padding: 8px 12px; font-size: 14px; }
-    button { cursor: pointer; }
+    button { cursor: pointer; border-radius: 6px; border: 1px solid #ccc; background: #f9f9f9; }
+    button:hover { background: #eee; }
     #status { font-size: 13px; color: #555; margin-bottom: 16px; }
     #transcript {
       border: 1px solid #ddd; background: #fafafa; padding: 12px;
