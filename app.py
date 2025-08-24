@@ -2,20 +2,23 @@ import os
 import json
 import threading
 import base64
-import websocket
 import audioop
 from flask import Flask, request, jsonify, render_template, Response
 from flask_socketio import SocketIO
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.rest import Client as TwilioRestClient
-from twilio.twiml.voice_response import VoiceResponse, Dial, Stream  # <-- Stream added
+from twilio.twiml.voice_response import VoiceResponse, Stream
+
+# Realtime OpenAI client
+import websocket
+import ssl
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # -----------------------------
-# 🔑 Environment variables
+# Environment
 # -----------------------------
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -24,55 +27,60 @@ TWILIO_API_KEY       = os.getenv("TWILIO_API_KEY")
 TWILIO_API_SECRET    = os.getenv("TWILIO_API_SECRET")
 TWILIO_NUMBER        = os.getenv("TWILIO_NUMBER")
 PUBLIC_BASE_URL      = os.getenv("PUBLIC_BASE_URL")
-ASSEMBLYAI_API_KEY   = os.getenv("ASSEMBLYAI_API_KEY")
+OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY")  # Your OpenAI key
 
 twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 CONFERENCE_NAME = "interview_room"
 
-# -----------------------------
-# AssemblyAI WebSocket session
-# -----------------------------
-assemblyai_ws = None
+openai_ws = None
 
-def start_assemblyai_ws():
-    global assemblyai_ws
-    url = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+# -----------------------------
+# OpenAI Realtime WS
+# -----------------------------
+def start_openai_ws():
+    global openai_ws
+    url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview"
+    headers = [
+        f"Authorization: Bearer {OPENAI_API_KEY}",
+        "OpenAI-Beta: realtime=v1"
+    ]
 
     def on_open(ws):
-        print("[AssemblyAI] ✅ WebSocket opened")
+        print("[OpenAI] ✅ WebSocket opened")
 
     def on_message(ws, msg):
         try:
             data = json.loads(msg)
-            if "text" in data:
-                socketio.emit("new_transcript", data)
+            if "type" in data and data["type"] == "transcript.delta":
+                # Emit live transcript to frontend
+                socketio.emit("new_transcript", {"text": data["text"]})
         except Exception as e:
-            print("[AssemblyAI] Parse error:", e)
+            print("[OpenAI] Parse error:", e)
 
     def on_error(ws, err):
-        print("[AssemblyAI] ❌ WebSocket error:", err)
+        print("[OpenAI] ❌ WebSocket error:", err)
 
     def on_close(ws, *_):
-        print("[AssemblyAI] 🔒 WebSocket closed")
+        print("[OpenAI] 🔒 WebSocket closed")
 
     ws = websocket.WebSocketApp(
         url,
-        header=[f"Authorization: {ASSEMBLYAI_API_KEY}"],
+        header=headers,
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,
         on_close=on_close
     )
-    assemblyai_ws = ws
+    openai_ws = ws
     thread = threading.Thread(target=ws.run_forever, daemon=True)
     thread.start()
 
 def init_ws():
-    print("[INIT] Starting AssemblyAI WS…")
-    start_assemblyai_ws()
+    print("[INIT] Starting OpenAI WS…")
+    start_openai_ws()
 
 # -----------------------------
-# Routes
+# Flask routes
 # -----------------------------
 @app.route("/")
 def index():
@@ -118,10 +126,7 @@ def call_candidate():
 @app.route("/voice", methods=["POST"])
 def voice():
     resp = VoiceResponse()
-
-    # Stream Twilio audio to /media (AssemblyAI)
     resp.start(Stream(url=absolute_url("/media")))
-
     dial = resp.dial(callerId=TWILIO_NUMBER)
     dial.conference(
         CONFERENCE_NAME,
@@ -133,25 +138,27 @@ def voice():
 
 @app.route("/media", methods=["POST"])
 def media():
-    global assemblyai_ws
+    global openai_ws
     try:
         data = request.get_json(force=True)
         if data.get("event") == "media":
             payload_b64 = data["media"]["payload"]
 
-            # Decode Twilio μ-law audio
+            # Twilio μ-law → PCM16
             ulaw_bytes = base64.b64decode(payload_b64)
             pcm16_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
 
             # Resample from 8kHz → 16kHz
             pcm16_16k = audioop.ratecv(pcm16_bytes, 2, 1, 8000, 16000, None)[0]
 
-            # Encode to base64 for AssemblyAI
-            msg = json.dumps({
-                "audio_data": base64.b64encode(pcm16_16k).decode("utf-8")
-            })
-            if assemblyai_ws:
-                assemblyai_ws.send(msg)
+            # Send audio to OpenAI WS
+            if openai_ws:
+                openai_ws.send(json.dumps({
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm16_16k).decode("utf-8")
+                }))
+                openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
+                openai_ws.send(json.dumps({"type": "response.create"}))
     except Exception as e:
         print("[/media] ERROR:", e)
     return ("", 200)
@@ -168,6 +175,5 @@ def absolute_url(path: str) -> str:
     return f"{base}{path}"
 
 if __name__ == "__main__":
-    init_ws()  # start AssemblyAI WebSocket
+    init_ws()
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
-
