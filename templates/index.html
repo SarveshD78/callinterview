@@ -3,15 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <title>Interview Call + Live Transcript</title>
+
+  <!-- Twilio JS Client -->
   <script src="{{ url_for('static', filename='js/twilio.min.js') }}"></script>
+
+  <!-- Socket.IO for live transcripts -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
     .row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
     input, button { padding: 8px 12px; font-size: 14px; }
     button { cursor: pointer; }
     #status { font-size: 13px; color: #555; margin-bottom: 16px; }
-    #transcript { border: 1px solid #ddd; background: #fafafa; padding: 12px; width: 100%; max-width: 760px; height: 320px; overflow-y: auto; line-height: 1.5; }
+    #transcript {
+      border: 1px solid #ddd; background: #fafafa; padding: 12px;
+      width: 100%; max-width: 760px; height: 320px; overflow-y: auto; line-height: 1.5;
+    }
     #transcript p { margin: 4px 0; }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #eee; margin-left: 6px; }
   </style>
@@ -25,6 +33,7 @@
     <input type="text" id="candidate" placeholder="+919876543210" style="min-width:260px;" />
     <button id="callBtn">Call Candidate</button>
     <button id="hangupBtn">Hangup</button>
+    <span class="pill" id="deviceState">device: init</span>
     <span class="pill" id="callState">call: idle</span>
   </div>
 
@@ -32,8 +41,13 @@
   <div id="transcript">(waiting…)</div>
 
   <script>
-    const transcriptDiv = document.getElementById("transcript");
+    let device = null;
+    let connection = null;
+
+    const statusEl = document.getElementById("status");
+    const deviceStateEl = document.getElementById("deviceState");
     const callStateEl = document.getElementById("callState");
+    const transcriptDiv = document.getElementById("transcript");
 
     const socket = io();
 
@@ -43,7 +57,10 @@
       transcriptDiv.appendChild(p);
       transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
     }
+    function setDeviceState(s) { deviceStateEl.textContent = "device: " + s; }
+    function setCallState(s)   { callStateEl.textContent   = "call: " + s; }
 
+    // --- receive transcripts ---
     socket.on("new_transcript", data => {
       if (!data) return;
       const text = data.transcript || data.text;
@@ -53,45 +70,92 @@
       log(`[${who}] ${text} ${tag}`);
     });
 
+    // --- initialize Twilio device ---
+    async function setupDevice() {
+      statusEl.textContent = "Getting Twilio token…";
+      const res = await fetch("/token");
+      const payload = await res.json();
+      const token = payload.token;
+
+      device = new Twilio.Device(token, { debug: true });
+
+      device.on("ready", () => {
+        setDeviceState("ready");
+        statusEl.textContent = "✅ Ready. Enter number and click Call Candidate.";
+      });
+
+      device.on("connect", (conn) => {
+        connection = conn;
+        setCallState("in-conference");
+        statusEl.textContent = "Browser joined conference.";
+      });
+
+      device.on("disconnect", () => {
+        connection = null;
+        setCallState("idle");
+        statusEl.textContent = "Disconnected.";
+      });
+
+      device.on("error", (err) => {
+        setDeviceState("error");
+        console.error("Twilio.Device error", err);
+        statusEl.textContent = "Device error: " + err.message;
+      });
+    }
+
+    // --- join conference ---
+    async function joinConference() {
+      if (!device) { alert("Device not ready"); return; }
+
+      // Resume audio context for browsers
+      if (typeof AudioContext !== "undefined") {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          if (ctx.state === "suspended") await ctx.resume();
+        } catch (e) {
+          console.warn("AudioContext resume failed", e);
+        }
+      }
+
+      device.connect({});
+      setCallState("joining…");
+      statusEl.textContent = "Joining browser to conference…";
+    }
+
+    // --- call candidate ---
     async function callCandidate() {
       const number = document.getElementById("candidate").value.trim();
       if (!number) { alert("Enter candidate number"); return; }
 
-      callStateEl.textContent = "call: dialing…";
+      // Make sure browser is in conference first
+      if (!connection) await joinConference();
 
-      try {
-        const res = await fetch("/call", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to: number })
-        });
+      const res = await fetch("/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: number })
+      });
+
+      if (res.ok) {
         const j = await res.json();
-        if (j.call_sid) {
-          log("📞 Candidate call started (CallSid: " + j.call_sid + ")");
-          callStateEl.textContent = "call: in-progress";
-        } else {
-          log("❌ Call failed");
-          callStateEl.textContent = "call: error";
-        }
-      } catch (e) {
-        console.error(e);
-        log("❌ Call error: " + e.message);
-        callStateEl.textContent = "call: error";
+        log("📞 Candidate call started (CallSid: " + j.call_sid + ")");
+      } else {
+        statusEl.textContent = "❌ Failed to dial candidate";
       }
     }
 
-    async function hangup() {
-      try {
-        await fetch("/hangup", { method: "POST" });
-        callStateEl.textContent = "call: idle";
-        log("Call hung up");
-      } catch (e) {
-        console.error(e);
-      }
+    function hangup() {
+      if (device) device.disconnectAll();
     }
 
     document.getElementById("callBtn").addEventListener("click", callCandidate);
     document.getElementById("hangupBtn").addEventListener("click", hangup);
+
+    setDeviceState("starting");
+    setupDevice().catch(err => {
+      setDeviceState("error");
+      statusEl.textContent = "Failed to setup device: " + err.message;
+    });
   </script>
 </body>
 </html>
