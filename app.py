@@ -31,7 +31,6 @@ OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY")  # Your OpenAI key
 
 twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 CONFERENCE_NAME = "interview_room"
-
 openai_ws = None
 
 # -----------------------------
@@ -49,13 +48,14 @@ def start_openai_ws():
         print("[OpenAI] ✅ WebSocket opened")
 
     def on_message(ws, msg):
+        print("[OpenAI] 🔹 Received message:", msg)
         try:
             data = json.loads(msg)
             if "type" in data and data["type"] == "transcript.delta":
-                # Emit live transcript to frontend
+                print("[OpenAI] 🎤 Transcript delta:", data["text"])
                 socketio.emit("new_transcript", {"text": data["text"]})
         except Exception as e:
-            print("[OpenAI] Parse error:", e)
+            print("[OpenAI] ❌ Parse error:", e)
 
     def on_error(ws, err):
         print("[OpenAI] ❌ WebSocket error:", err)
@@ -72,8 +72,9 @@ def start_openai_ws():
         on_close=on_close
     )
     openai_ws = ws
-    thread = threading.Thread(target=ws.run_forever, daemon=True)
+    thread = threading.Thread(target=ws.run_forever, kwargs={"sslopt": {"cert_reqs": ssl.CERT_NONE}}, daemon=True)
     thread.start()
+    print("[OpenAI] 🟢 WebSocket thread started")
 
 def init_ws():
     print("[INIT] Starting OpenAI WS…")
@@ -84,10 +85,12 @@ def init_ws():
 # -----------------------------
 @app.route("/")
 def index():
+    print("[/]", "Serving index page")
     return render_template("index.html")
 
 @app.route("/token")
 def token():
+    print("[/token]", "Generating Twilio token")
     identity = "browser_user"
     token = AccessToken(
         TWILIO_ACCOUNT_SID,
@@ -103,16 +106,20 @@ def token():
     jwt_token = token.to_jwt()
     if hasattr(jwt_token, "decode"):
         jwt_token = jwt_token.decode("utf-8")
+    print("[/token] Token generated for identity:", identity)
     return jsonify({"token": jwt_token})
 
 @app.route("/call", methods=["POST"])
 def call_candidate():
     data = request.get_json(force=True)
     to_number = data.get("to")
+    print("[/call] Received call request to:", to_number)
     if not to_number:
+        print("[/call] ❌ Missing 'to' number")
         return jsonify({"error": "Missing 'to' phone number"}), 400
 
     voice_url = absolute_url("/voice")
+    print("[/call] Voice URL:", voice_url)
     call = twilio_client.calls.create(
         to=to_number,
         from_=TWILIO_NUMBER,
@@ -121,10 +128,12 @@ def call_candidate():
         status_callback_event=["initiated", "ringing", "answered", "completed"],
         status_callback_method="POST"
     )
+    print("[/call] Call created with SID:", call.sid)
     return jsonify({"call_sid": call.sid})
 
 @app.route("/voice", methods=["POST"])
 def voice():
+    print("[/voice] Twilio voice webhook called")
     resp = VoiceResponse()
     resp.start(Stream(url=absolute_url("/media")))
     dial = resp.dial(callerId=TWILIO_NUMBER)
@@ -134,6 +143,7 @@ def voice():
         start_conference_on_enter=True,
         end_conference_on_exit=True
     )
+    print("[/voice] Returning TwiML response")
     return Response(str(resp), mimetype="text/xml")
 
 @app.route("/media", methods=["POST"])
@@ -143,29 +153,35 @@ def media():
         data = request.get_json(force=True)
         if data.get("event") == "media":
             payload_b64 = data["media"]["payload"]
+            print("[/media] Received media payload, length:", len(payload_b64))
 
             # Twilio μ-law → PCM16
             ulaw_bytes = base64.b64decode(payload_b64)
             pcm16_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
+            print("[/media] PCM16 bytes length:", len(pcm16_bytes))
 
             # Resample from 8kHz → 16kHz
             pcm16_16k = audioop.ratecv(pcm16_bytes, 2, 1, 8000, 16000, None)[0]
+            print("[/media] Resampled PCM16_16k length:", len(pcm16_16k))
 
             # Send audio to OpenAI WS
             if openai_ws:
+                print("[/media] Sending audio to OpenAI WS")
                 openai_ws.send(json.dumps({
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(pcm16_16k).decode("utf-8")
                 }))
                 openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
                 openai_ws.send(json.dumps({"type": "response.create"}))
+            else:
+                print("[/media] ❌ OpenAI WS not initialized")
     except Exception as e:
         print("[/media] ERROR:", e)
     return ("", 200)
 
 @app.route("/status", methods=["POST"])
 def status():
-    print("[/status]", dict(request.values))
+    print("[/status] Event received:", dict(request.values))
     return ("", 200)
 
 def absolute_url(path: str) -> str:
