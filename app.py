@@ -9,13 +9,13 @@ from flask_socketio import SocketIO
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
 from twilio.rest import Client as TwilioRestClient
-from twilio.twiml.voice_response import VoiceResponse
+from twilio.twiml.voice_response import VoiceResponse, Dial, Stream  # <-- Stream added
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # -----------------------------
-# 🔑 Env
+# 🔑 Environment variables
 # -----------------------------
 TWILIO_ACCOUNT_SID   = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN    = os.getenv("TWILIO_AUTH_TOKEN")
@@ -30,7 +30,7 @@ twilio_client = TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 CONFERENCE_NAME = "interview_room"
 
 # -----------------------------
-# AssemblyAI WS session
+# AssemblyAI WebSocket session
 # -----------------------------
 assemblyai_ws = None
 
@@ -66,7 +66,6 @@ def start_assemblyai_ws():
     assemblyai_ws = ws
     thread = threading.Thread(target=ws.run_forever, daemon=True)
     thread.start()
-
 
 def init_ws():
     print("[INIT] Starting AssemblyAI WS…")
@@ -120,7 +119,7 @@ def call_candidate():
 def voice():
     resp = VoiceResponse()
 
-    # Stream Twilio audio to /media
+    # Stream Twilio audio to /media (AssemblyAI)
     resp.start(Stream(url=absolute_url("/media")))
 
     dial = resp.dial(callerId=TWILIO_NUMBER)
