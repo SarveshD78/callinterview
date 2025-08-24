@@ -168,4 +168,6 @@ def absolute_url(path: str) -> str:
     return f"{base}{path}"
 
 if __name__ == "__main__":
+    init_ws()  # start AssemblyAI WebSocket
     socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+
