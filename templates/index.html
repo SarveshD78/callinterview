@@ -57,14 +57,18 @@
       transcriptDiv.appendChild(p);
       transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
     }
+
     function setDeviceState(s) { deviceStateEl.textContent = "device: " + s; }
     function setCallState(s)   { callStateEl.textContent   = "call: " + s; }
 
     // --- receive transcripts ---
     socket.on("new_transcript", data => {
       if (!data) return;
-      const text = data.transcript || data.text;
+      const text = (data.transcript || data.text || "").trim();
       if (!text) return;
+
+      if (transcriptDiv.textContent.includes("(waiting…)")) transcriptDiv.textContent = "";
+
       const who  = data.channel || "both";
       const tag  = data.is_final ? "✔" : "…";
       log(`[${who}] ${text} ${tag}`);
@@ -107,11 +111,12 @@
     async function joinConference() {
       if (!device) { alert("Device not ready"); return; }
 
-      // Resume audio context for browsers
+      // Resume audio context on user gesture
       if (typeof AudioContext !== "undefined") {
         try {
           const ctx = new (window.AudioContext || window.webkitAudioContext)();
           if (ctx.state === "suspended") await ctx.resume();
+          console.log("AudioContext resumed ✅");
         } catch (e) {
           console.warn("AudioContext resume failed", e);
         }
@@ -127,7 +132,7 @@
       const number = document.getElementById("candidate").value.trim();
       if (!number) { alert("Enter candidate number"); return; }
 
-      // Make sure browser is in conference first
+      // Ensure browser is in conference first
       if (!connection) await joinConference();
 
       const res = await fetch("/call", {

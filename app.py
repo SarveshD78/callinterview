@@ -148,14 +148,20 @@ def voice():
 
 @app.route("/media", methods=["POST"])
 def media():
+    """Receive Twilio media chunks and send to OpenAI/AssemblyAI for realtime transcription."""
     global openai_ws
     try:
         data = request.get_json(force=True)
-        if data.get("event") == "media":
-            payload_b64 = data["media"]["payload"]
-            print("[/media] Received media payload, length:", len(payload_b64))
+        if not data:
+            print("[/media] No data received")
+            return ("", 200)
 
-            # Twilio μ-law → PCM16
+        event_type = data.get("event")
+        if event_type == "media":
+            payload_b64 = data["media"]["payload"]
+            print(f"[/media] Received media payload, length: {len(payload_b64)}")
+
+            # Decode μ-law audio → PCM16
             ulaw_bytes = base64.b64decode(payload_b64)
             pcm16_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
             print("[/media] PCM16 bytes length:", len(pcm16_bytes))
@@ -164,19 +170,29 @@ def media():
             pcm16_16k = audioop.ratecv(pcm16_bytes, 2, 1, 8000, 16000, None)[0]
             print("[/media] Resampled PCM16_16k length:", len(pcm16_16k))
 
-            # Send audio to OpenAI WS
+            # Send to OpenAI WS
             if openai_ws:
-                print("[/media] Sending audio to OpenAI WS")
                 openai_ws.send(json.dumps({
                     "type": "input_audio_buffer.append",
                     "audio": base64.b64encode(pcm16_16k).decode("utf-8")
                 }))
+            else:
+                print("[/media] ❌ OpenAI WS not initialized")
+
+        elif event_type == "start":
+            print("[/media] Stream started")
+
+        elif event_type == "stop":
+            print("[/media] Stream stopped, committing buffer")
+            if openai_ws:
                 openai_ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
                 openai_ws.send(json.dumps({"type": "response.create"}))
             else:
                 print("[/media] ❌ OpenAI WS not initialized")
+
     except Exception as e:
         print("[/media] ERROR:", e)
+
     return ("", 200)
 
 @app.route("/status", methods=["POST"])
