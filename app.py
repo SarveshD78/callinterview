@@ -45,7 +45,7 @@ def token():
     )
     grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
     token.add_grant(grant)
-    return jsonify({"token": token.to_jwt().decode()})
+    return jsonify({"token": token.to_jwt()})
 
 
 @app.route("/voice", methods=["POST"])
