@@ -33,21 +33,27 @@ def log(*args):
 def index():
     return render_template("index.html")
 
-
 @app.route("/token")
 def token():
-    """Return AccessToken for Twilio.Device"""
-    identity = "browser_user"
-    token = AccessToken(
-        TWILIO_ACCOUNT_SID,
-        TWILIO_API_KEY,
-        TWILIO_API_SECRET,
-        identity=identity,
-    )
-    voice_grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
-    token.add_grant(voice_grant)
+    try:
+        identity = "browser_user"
 
-    return jsonify({"token": token.to_jwt().decode("utf-8")})
+        # Create access token
+        access_token = AccessToken(
+            TWILIO_ACCOUNT_SID,
+            TWILIO_API_KEY,
+            TWILIO_API_SECRET,
+            identity=identity,
+        )
+        voice_grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
+        access_token.add_grant(voice_grant)
+
+        jwt_token = access_token.to_jwt().decode("utf-8")
+        return jsonify({"token": jwt_token})
+
+    except Exception as e:
+        # Return error as JSON so front-end doesn't break
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/twiml", methods=["POST"])
