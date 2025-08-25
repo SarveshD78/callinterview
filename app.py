@@ -2,95 +2,106 @@ import os
 import json
 import base64
 import wave
-import audioop
-from flask import Flask, request, render_template, jsonify
-from flask_socketio import SocketIO
+
+from flask import Flask, request, jsonify, render_template
 from flask_sockets import Sockets
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
-from twilio.rest import Client
 
-# Flask + Socket setup
+# Flask app + WebSocket setup
 app = Flask(__name__)
-socketio = SocketIO(app)
 sockets = Sockets(app)
 
-# Twilio creds (from env vars)
+# Twilio credentials (set via environment variables)
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_API_KEY = os.getenv("TWILIO_API_KEY_SID")
-TWILIO_API_SECRET = os.getenv("TWILIO_API_KEY_SECRET")
-TWILIO_APP_SID = os.getenv("TWILIO_APP_SID")
-TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")
+TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET")
+TWIML_APP_SID = os.getenv("TWIML_APP_SID")
 
-client = Client(TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_ACCOUNT_SID)
+HTTP_SERVER_PORT = int(os.getenv("PORT", 8080))
 
-# =============== Browser UI ===============
+
+def log(*args):
+    print("Media WS:", *args)
+
+
+# ------------------------------
+# Routes
+# ------------------------------
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
+
 @app.route("/token")
 def token():
+    """Return AccessToken for Twilio.Device"""
     identity = "browser_user"
-    token = AccessToken(TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, identity=identity)
-    token.add_grant(VoiceGrant(outgoing_application_sid=TWILIO_APP_SID, incoming_allow=True))
-    return jsonify({"token": token.to_jwt().decode()})
-
-@app.route("/call", methods=["POST"])
-def call():
-    data = request.json
-    number = data.get("to")
-    call = client.calls.create(
-        to=number,
-        from_=TWILIO_PHONE_NUMBER,
-        url=request.url_root + "twiml"  # when call connects, hit /twiml
+    token = AccessToken(
+        TWILIO_ACCOUNT_SID,
+        TWILIO_API_KEY,
+        TWILIO_API_SECRET,
+        identity=identity,
     )
-    return jsonify({"call_sid": call.sid})
+    voice_grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
+    token.add_grant(voice_grant)
 
-# =============== Twilio Streaming ===============
-@app.route("/twiml", methods=["POST", "GET"])
-def twiml():
+    return jsonify({"token": token.to_jwt().decode("utf-8")})
+
+
+@app.route("/twiml", methods=["POST"])
+def return_twiml():
+    """Return TwiML that connects call to WebSocket stream"""
     return render_template("streams.xml")
+
+
+# ------------------------------
+# WebSocket Handler
+# ------------------------------
 
 @sockets.route("/media")
 def media_stream(ws):
-    """Receive audio packets from Twilio Media Stream and save to WAV"""
-    print("🔗 Media stream connected")
-    has_seen_media = False
+    log("WebSocket connection accepted")
 
-    # setup WAV file
-    wav = wave.open("call_audio.wav", "wb")
-    wav.setnchannels(1)  # mono
-    wav.setsampwidth(2)  # 16-bit PCM
-    wav.setframerate(8000)
+    # Create wav file for saving audio
+    wf = wave.open("call_audio.wav", "wb")
+    wf.setnchannels(1)       # mono
+    wf.setsampwidth(2)       # 16-bit
+    wf.setframerate(8000)    # Twilio streams at 8kHz
 
+    count = 0
     while not ws.closed:
         message = ws.receive()
         if message is None:
             continue
+
         data = json.loads(message)
 
         if data["event"] == "start":
-            print("▶️ Stream started")
+            log("Start event received")
         elif data["event"] == "media":
-            if not has_seen_media:
-                print("🎤 Receiving audio...")
-                has_seen_media = True
             audio_chunk = base64.b64decode(data["media"]["payload"])
-            # Convert μ-law to PCM16
-            pcm16 = audioop.ulaw2lin(audio_chunk, 2)
-            wav.writeframes(pcm16)
+            wf.writeframes(audio_chunk)
         elif data["event"] == "stop":
-            print("⏹️ Stream stopped")
+            log("Stop event received")
             break
 
-    wav.close()
-    print("💾 Saved call_audio.wav")
+        count += 1
 
-# =============== Run ===============
+    wf.close()
+    log(f"Connection closed. Saved audio to call_audio.wav, received {count} messages")
+
+
+# ------------------------------
+# Run Locally
+# ------------------------------
 if __name__ == "__main__":
     from gevent import pywsgi
     from geventwebsocket.handler import WebSocketHandler
-    server = pywsgi.WSGIServer(("", 5000), app, handler_class=WebSocketHandler)
-    print("🚀 Server running at http://localhost:5000")
+
+    server = pywsgi.WSGIServer(
+        ("", HTTP_SERVER_PORT), app, handler_class=WebSocketHandler
+    )
+    print(f"Server listening on http://localhost:{HTTP_SERVER_PORT}")
     server.serve_forever()
