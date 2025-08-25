@@ -1,0 +1,8 @@
+<Response>
+  <Start>
+    <Stream url="wss://shark-app-fu64d.ondigitalocean.app/media" />
+  </Start>
+  <Dial>
+    <Conference>InterviewRoom</Conference>
+  </Dial>
+</Response>
