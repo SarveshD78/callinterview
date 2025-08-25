@@ -1,116 +1,98 @@
 import os
-import json
 import base64
-import wave
-
+import json
 from flask import Flask, request, jsonify, render_template
-from flask_sockets import Sockets
+from flask_socketio import SocketIO, emit
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
+from twilio.twiml.voice_response import VoiceResponse, Connect, Stream
+from twilio.rest import Client
 
-# Flask app + WebSocket setup
 app = Flask(__name__)
-sockets = Sockets(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Twilio credentials (set via environment variables)
+# ---- Twilio credentials from env ----
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_API_KEY = os.getenv("TWILIO_API_KEY")
-TWILIO_API_SECRET = os.getenv("TWILIO_API_SECRET")
-TWIML_APP_SID = os.getenv("TWIML_APP_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWIML_APP_SID = os.getenv("TWIML_APP_SID")  # must be set in Twilio Console
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 
-HTTP_SERVER_PORT = int(os.getenv("PORT", 8080))
+# same conference for browser + candidate
+CONFERENCE_NAME = "interview-room"
 
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-def log(*args):
-    print("Media WS:", *args)
-
-
-# ------------------------------
-# Routes
-# ------------------------------
 
 @app.route("/")
 def index():
     return render_template("index.html")
 
+
 @app.route("/token")
 def token():
-    try:
-        identity = "browser_user"
-
-        access_token = AccessToken(
-            TWILIO_ACCOUNT_SID,
-            TWILIO_API_KEY,
-            TWILIO_API_SECRET,
-            identity=identity,
-        )
-        voice_grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
-        access_token.add_grant(voice_grant)
-
-        # ensure always string
-        jwt_token = access_token.to_jwt()
-        if isinstance(jwt_token, bytes):
-            jwt_token = jwt_token.decode("utf-8")
-
-        return jsonify({"token": jwt_token})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-
-@app.route("/twiml", methods=["POST"])
-def return_twiml():
-    """Return TwiML that connects call to WebSocket stream"""
-    return render_template("streams.xml")
-
-
-# ------------------------------
-# WebSocket Handler
-# ------------------------------
-
-@sockets.route("/media")
-def media_stream(ws):
-    log("WebSocket connection accepted")
-
-    # Create wav file for saving audio
-    wf = wave.open("call_audio.wav", "wb")
-    wf.setnchannels(1)       # mono
-    wf.setsampwidth(2)       # 16-bit
-    wf.setframerate(8000)    # Twilio streams at 8kHz
-
-    count = 0
-    while not ws.closed:
-        message = ws.receive()
-        if message is None:
-            continue
-
-        data = json.loads(message)
-
-        if data["event"] == "start":
-            log("Start event received")
-        elif data["event"] == "media":
-            audio_chunk = base64.b64decode(data["media"]["payload"])
-            wf.writeframes(audio_chunk)
-        elif data["event"] == "stop":
-            log("Stop event received")
-            break
-
-        count += 1
-
-    wf.close()
-    log(f"Connection closed. Saved audio to call_audio.wav, received {count} messages")
-
-
-# ------------------------------
-# Run Locally
-# ------------------------------
-if __name__ == "__main__":
-    from gevent import pywsgi
-    from geventwebsocket.handler import WebSocketHandler
-
-    server = pywsgi.WSGIServer(
-        ("", HTTP_SERVER_PORT), app, handler_class=WebSocketHandler
+    identity = "browser"
+    token = AccessToken(
+        TWILIO_ACCOUNT_SID,
+        os.getenv("TWILIO_API_KEY"),
+        os.getenv("TWILIO_API_SECRET"),
+        identity=identity,
     )
-    print(f"Server listening on http://localhost:{HTTP_SERVER_PORT}")
-    server.serve_forever()
+    grant = VoiceGrant(outgoing_application_sid=TWIML_APP_SID)
+    token.add_grant(grant)
+    return jsonify({"token": token.to_jwt().decode()})
+
+
+@app.route("/voice", methods=["POST"])
+def voice():
+    """TwiML for browser device to join conference + stream audio."""
+    response = VoiceResponse()
+    with response.connect() as connect:
+        connect.stream(url="wss://shark-app-fu64d.ondigitalocean.app/media")
+        connect.conference(CONFERENCE_NAME, start_conference_on_enter=True)
+    return str(response)
+
+
+@app.route("/call", methods=["POST"])
+def call():
+    data = request.get_json()
+    to_number = data.get("to")
+    if not to_number:
+        return jsonify({"error": "Missing number"}), 400
+
+    call = client.calls.create(
+        to=to_number,
+        from_=TWILIO_PHONE_NUMBER,
+        twiml=f"<Response><Dial><Conference>{CONFERENCE_NAME}</Conference></Dial></Response>",
+    )
+    return jsonify({"call_sid": call.sid})
+
+
+# ---- WebSocket: save audio + forward transcript later ----
+@socketio.on("connect", namespace="/media")
+def media_connect():
+    print("✅ Media WS connected")
+
+
+@socketio.on("message", namespace="/media")
+def media_message(msg):
+    try:
+        data = json.loads(msg)
+        if data["event"] == "media":
+            audio_chunk = base64.b64decode(data["media"]["payload"])
+            with open("call_audio.raw", "ab") as f:
+                f.write(audio_chunk)
+        elif data["event"] == "start":
+            print("▶️ Stream started")
+        elif data["event"] == "stop":
+            print("⏹ Stream stopped")
+    except Exception as e:
+        print("WS error:", e)
+
+
+@socketio.on("disconnect", namespace="/media")
+def media_disconnect():
+    print("❌ Media WS disconnected")
+
+
+if __name__ == "__main__":
+    socketio.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
